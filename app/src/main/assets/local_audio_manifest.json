@@ -1,0 +1,29 @@
+{
+  "startup_tone": "startup_tone.wav",
+  "startup_greeting": "startup_greeting.mp3",
+  "menu_item_selected": "menu_item_selected.wav",
+  "menu_highlight_sounds": {
+    "sleep": "mainmenu_sleep.mp3",
+    "calm": "mainmenu_calm.mp3",
+    "night_wake": "mainmenu_night_wake.mp3",
+    "breathe": "mainmenu_breathe.mp3",
+    "awake": "mainmenu_awake.mp3",
+    "library": "mainmenu_library.mp3"
+  },
+  "menu_background_music": {
+    "sleep": "sleep_background.mp3",
+    "calm": "calm_background.wav",
+    "night_wake": "night_wake_background.wav",
+    "breathe": "breathe_background.mp3",
+    "awake": "awake_background.wav",
+    "library": "library_background.wav"
+  },
+  "submenu_background_music": {
+    "sleep": "sleep_submenu_bgmusic.wav",
+    "calm": "calm_submenu_bg_music.wav",
+    "night_wake": "night_wake_submenu_bg_music.wav",
+    "breathe": "breathe_submenu_bg_music.wav",
+    "awake": "awake_submenu_bg_music.wav",
+    "library": "library_submenu_bg_music.wav"
+  }
+}

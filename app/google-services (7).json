@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "107458197114",
+    "project_id": "sail-81f01",
+    "storage_bucket": "sail-81f01.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:107458197114:android:cb43997f4cf2c88179edc3",
+        "android_client_info": {
+          "package_name": "com.sleepitech.sail"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKIzehJwNP8DVBH8qbgZe4qpStNlgp5TI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
