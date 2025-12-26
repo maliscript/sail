@@ -1,7 +1,11 @@
 package com.sleepitech.sail
 
-import android.media.MediaPlayer
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -38,10 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.sleepitech.sail.ui.theme.SailTheme
-import java.io.InputStreamReader
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -51,29 +52,6 @@ sealed class Screen {
     data class SubMenu(val parentMenu: MenuItem) : Screen()
 }
 
-data class StarPosition(val x: Float, val y: Float, val size: Float, val alpha: Float)
-
-data class MenuItem(
-    val name: String,
-    val colors: List<Color>,
-    val backgroundMusicResId: Int,
-    val highlightSoundResId: Int,
-    val subMenu: List<SubMenuItem> = emptyList(),
-    val subMenuMusicResId: Int = 0,
-    val stars: List<StarPosition> = emptyList()
-)
-
-data class SubMenuItem(val name: String)
-
-data class AudioManifest(
-    val startup_tone: String,
-    val startup_greeting: String,
-    val menu_item_selected: String,
-    val menu_highlight_sounds: Map<String, String>,
-    val menu_background_music: Map<String, String>,
-    val submenu_background_music: Map<String, String>
-)
-
 class MainActivity : ComponentActivity() {
 
     private val TAG = "MainActivity"
@@ -81,40 +59,88 @@ class MainActivity : ComponentActivity() {
     private var selectedMenuIndex by mutableStateOf(0)
     private var selectedSubMenuIndex by mutableStateOf(0)
     private var lastDpadEvent by mutableStateOf(0L)
+    private var menuItems by mutableStateOf<List<MenuItem>>(emptyList())
 
-    private lateinit var menuItems: List<MenuItem>
-    private lateinit var audioManifest: AudioManifest
+    private var audioService: AudioPlaybackService? = null
+    private var isServiceBound by mutableStateOf(false)
+    private var isStartupSequenceCompleted by mutableStateOf(false)
 
-    private var startupTonePlayer: MediaPlayer? = null
-    private var startupGreetingPlayer: MediaPlayer? = null
-    private var backgroundMusicPlayer: MediaPlayer? = null
-    private var highlightSoundPlayer: MediaPlayer? = null
-    private var isStartupSequenceCompleted = false
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as AudioPlaybackService.LocalBinder
+            audioService = binder.getService()
+            isServiceBound = true
+            menuItems = audioService?.getMenuItems() ?: emptyList()
+            if (currentScreen == Screen.SailHome && !isStartupSequenceCompleted) {
+                playStartupSequence()
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            audioService = null
+            isServiceBound = false
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        loadAudioManifest()
-        setupMenuItems()
         setupBackButton()
-
         enableEdgeToEdge()
+
         setContent {
             SailTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    when (val screen = currentScreen) {
-                        is Screen.SailHome -> {
-                            SailHomeScreen(modifier = Modifier.padding(innerPadding))
-                        }
-                        is Screen.MainMenu -> {
-                            val menuItem = menuItems.getOrNull(selectedMenuIndex)
-                            menuItem?.let { HomeScreen(modifier = Modifier.padding(innerPadding), menuItem = it) }
-                        }
-                        is Screen.SubMenu -> {
-                            SubMenuScreen(modifier = Modifier.padding(innerPadding), menu = screen.parentMenu, selectedIndex = selectedSubMenuIndex)
+                    if (menuItems.isNotEmpty()) {
+                        when (val screen = currentScreen) {
+                            is Screen.SailHome -> {
+                                SailHomeScreen(modifier = Modifier.padding(innerPadding))
+                            }
+
+                            is Screen.MainMenu -> {
+                                val menuItem = menuItems.getOrNull(selectedMenuIndex)
+                                menuItem?.let {
+                                    HomeScreen(
+                                        modifier = Modifier.padding(innerPadding),
+                                        menuItem = it
+                                    )
+                                }
+                            }
+
+                            is Screen.SubMenu -> {
+                                SubMenuScreen(
+                                    modifier = Modifier.padding(innerPadding),
+                                    menu = screen.parentMenu,
+                                    selectedIndex = selectedSubMenuIndex
+                                )
+                            }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Intent(this, AudioPlaybackService::class.java).also { intent ->
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (isServiceBound) {
+            unbindService(serviceConnection)
+            isServiceBound = false
+            audioService?.stopBackgroundMusic()
+        }
+    }
+
+    private fun playStartupSequence() {
+        if (!isStartupSequenceCompleted) {
+            audioService?.playStartupSequence {
+                isStartupSequenceCompleted = true
+                audioService?.playMainMenuMusic()
             }
         }
     }
@@ -128,160 +154,29 @@ class MainActivity : ComponentActivity() {
                         selectedSubMenuIndex = 0
                         playBackgroundMusicForCurrentMenu()
                     }
+
                     is Screen.MainMenu -> {
                         currentScreen = Screen.SailHome
-                        backgroundMusicPlayer?.stop()
                     }
-                    else -> finish()
+
+                    else -> if (!isChangingConfigurations) finish()
                 }
             }
         })
     }
 
-    private fun loadAudioManifest() {
-        try {
-            assets.open("local_audio_manifest.json").use { inputStream ->
-                InputStreamReader(inputStream).use { reader ->
-                    val type = object : TypeToken<AudioManifest>() {}.type
-                    audioManifest = Gson().fromJson(reader, type)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading audio manifest.", e)
-            audioManifest = AudioManifest("", "", "", emptyMap(), emptyMap(), emptyMap())
-        }
-    }
-
-    private fun setupMenuItems() {
-        val sleepSubMenu = listOf(SubMenuItem("Start Sleep"), SubMenuItem("Stories"), SubMenuItem("Soundscapes"), SubMenuItem("Sleep Guidance"))
-
-        menuItems = listOf(
-            MenuItem("Sleep", listOf(Color(0xFF0d3b66), Color(0xFF1a4b7c), Color(0xFF285c93)),
-                getRawResourceId(audioManifest.menu_background_music["sleep"]),
-                getRawResourceId(audioManifest.menu_highlight_sounds["sleep"]),
-                sleepSubMenu, getRawResourceId(audioManifest.submenu_background_music["sleep"])),
-            MenuItem("Calm", listOf(Color(0xFF3b8d99), Color(0xFF4eb0c4), Color(0xFF63cbe0)),
-                getRawResourceId(audioManifest.menu_background_music["calm"]),
-                getRawResourceId(audioManifest.menu_highlight_sounds["calm"]),
-                subMenuMusicResId = getRawResourceId(audioManifest.submenu_background_music["calm"])),
-            MenuItem("Night Wake", listOf(Color(0xFF1e2a3a), Color(0xFF2a394f), Color(0xFF364864)),
-                getRawResourceId(audioManifest.menu_background_music["night_wake"]),
-                getRawResourceId(audioManifest.menu_highlight_sounds["night_wake"]),
-                subMenuMusicResId = getRawResourceId(audioManifest.submenu_background_music["night_wake"])),
-            MenuItem("Breathe", listOf(Color(0xFF78a3a5), Color(0xFF90babf), Color(0xFFa9d1d8)),
-                getRawResourceId(audioManifest.menu_background_music["breathe"]),
-                getRawResourceId(audioManifest.menu_highlight_sounds["breathe"]),
-                subMenuMusicResId = getRawResourceId(audioManifest.submenu_background_music["breathe"])),
-            MenuItem("Awake", listOf(Color(0xFFf4a261), Color(0xFFe76f51), Color(0xFFd94e3d)),
-                getRawResourceId(audioManifest.menu_background_music["awake"]),
-                getRawResourceId(audioManifest.menu_highlight_sounds["awake"]),
-                subMenuMusicResId = getRawResourceId(audioManifest.submenu_background_music["awake"])),
-            MenuItem("Library", listOf(Color(0xFF6d6875), Color(0xFF8b8593), Color(0xFFa9a2b1)),
-                getRawResourceId(audioManifest.menu_background_music["library"]),
-                getRawResourceId(audioManifest.menu_highlight_sounds["library"]),
-                subMenuMusicResId = getRawResourceId(audioManifest.submenu_background_music["library"]))
-        )
-    }
-
-    private fun getRawResourceId(resNameWithExtension: String?): Int {
-        if (resNameWithExtension.isNullOrEmpty()) return 0
-        val resName = resNameWithExtension.substringBeforeLast('.')
-        val resId = resources.getIdentifier(resName, "raw", packageName)
-        if (resId == 0) {
-            Log.e(TAG, "Audio resource not found: '$resNameWithExtension'.")
-        }
-        return resId
-    }
-
-    override fun onStart() {
-        super.onStart()
-        if (!isStartupSequenceCompleted) {
-            playStartupSequence()
-        }
-    }
-
-    private fun playStartupSequence() {
-        val onSequenceFinish = { isStartupSequenceCompleted = true }
-
-        val toneResId = getRawResourceId(audioManifest.startup_tone)
-        val greetingResId = getRawResourceId(audioManifest.startup_greeting)
-
-        if (greetingResId != 0) {
-            startupGreetingPlayer = MediaPlayer.create(this, greetingResId)
-            startupGreetingPlayer?.setOnCompletionListener { onSequenceFinish() }
-        }
-
-        if (toneResId != 0) {
-            startupTonePlayer = MediaPlayer.create(this, toneResId)
-            startupTonePlayer?.setOnCompletionListener {
-                startupGreetingPlayer?.start() ?: onSequenceFinish()
-            }
-        }
-
-        startupTonePlayer?.start() ?: startupGreetingPlayer?.start() ?: onSequenceFinish()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        releaseMediaPlayers()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        releaseMediaPlayers()
-    }
-
-    private fun releaseMediaPlayers() {
-        startupTonePlayer?.release()
-        startupTonePlayer = null
-        startupGreetingPlayer?.release()
-        startupGreetingPlayer = null
-        backgroundMusicPlayer?.release()
-        backgroundMusicPlayer = null
-        highlightSoundPlayer?.release()
-        highlightSoundPlayer = null
-    }
-
     private fun playBackgroundMusicForCurrentMenu() {
-        backgroundMusicPlayer?.release()
-        backgroundMusicPlayer = null
-
-        val resId = when(val screen = currentScreen) {
-            is Screen.MainMenu -> {
-                Log.d(TAG, "playBackgroundMusic: Screen is MainMenu, index: $selectedMenuIndex")
-                menuItems.getOrNull(selectedMenuIndex)?.backgroundMusicResId
-            }
-            is Screen.SubMenu -> {
-                Log.d(TAG, "playBackgroundMusic: Screen is SubMenu, parent: ${screen.parentMenu.name}")
-                screen.parentMenu.subMenuMusicResId
-            }
-            else -> {
-                Log.d(TAG, "playBackgroundMusic: Screen is other, no music.")
-                null
-            }
+        val musicName = when (val screen = currentScreen) {
+            is Screen.MainMenu -> menuItems.getOrNull(selectedMenuIndex)?.backgroundMusic
+            is Screen.SubMenu -> screen.parentMenu.subMenuMusic
+            else -> null
         }
-
-        Log.d(TAG, "playBackgroundMusic: Final resource ID is $resId")
-
-        if (resId != null && resId != 0) {
-            Log.d(TAG, "playBackgroundMusic: Playing music.")
-            backgroundMusicPlayer = MediaPlayer.create(this, resId)
-            backgroundMusicPlayer?.isLooping = true
-            backgroundMusicPlayer?.start()
-        } else {
-            Log.d(TAG, "playBackgroundMusic: No valid music resource ID. Stopping music.")
-        }
+        audioService?.playBackgroundMusic(musicName)
     }
 
     private fun playHighlightSound() {
-        highlightSoundPlayer?.release()
-        highlightSoundPlayer = null
-        val resId = menuItems.getOrNull(selectedMenuIndex)?.highlightSoundResId
-        if (resId != null && resId != 0) {
-            highlightSoundPlayer = MediaPlayer.create(this, resId)
-            highlightSoundPlayer?.setOnCompletionListener { it.release() }
-            highlightSoundPlayer?.start()
-        }
+        val soundName = menuItems.getOrNull(selectedMenuIndex)?.highlightSound
+        audioService?.playHighlightSound(soundName)
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
@@ -290,18 +185,21 @@ class MainActivity : ComponentActivity() {
             if (currentTime - lastDpadEvent < 300) return true
 
             val yValue = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-            if (yValue == -1.0f) { // D-pad Up
+            if (yValue < -0.5f) { // D-pad Up
                 handleDpadUp()
                 lastDpadEvent = currentTime
-            } else if (yValue == 1.0f) { // D-pad Down
+                return true
+            } else if (yValue > 0.5f) { // D-pad Down
                 handleDpadDown()
                 lastDpadEvent = currentTime
+                return true
             }
         }
-        return true
+        return super.onGenericMotionEvent(event)
     }
 
     private fun handleDpadUp() {
+        if (menuItems.isEmpty()) return
         when (currentScreen) {
             is Screen.SailHome -> {
                 currentScreen = Screen.MainMenu
@@ -309,11 +207,13 @@ class MainActivity : ComponentActivity() {
                 playHighlightSound()
                 playBackgroundMusicForCurrentMenu()
             }
+
             is Screen.MainMenu -> {
                 selectedMenuIndex = (selectedMenuIndex - 1 + menuItems.size) % menuItems.size
                 playHighlightSound()
                 playBackgroundMusicForCurrentMenu()
             }
+
             is Screen.SubMenu -> {
                 val screen = currentScreen as Screen.SubMenu
                 selectedSubMenuIndex = (selectedSubMenuIndex - 1 + screen.parentMenu.subMenu.size) % screen.parentMenu.subMenu.size
@@ -322,6 +222,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleDpadDown() {
+        if (menuItems.isEmpty()) return
         when (currentScreen) {
             is Screen.SailHome -> {
                 currentScreen = Screen.MainMenu
@@ -329,11 +230,13 @@ class MainActivity : ComponentActivity() {
                 playHighlightSound()
                 playBackgroundMusicForCurrentMenu()
             }
+
             is Screen.MainMenu -> {
                 selectedMenuIndex = (selectedMenuIndex + 1) % menuItems.size
                 playHighlightSound()
                 playBackgroundMusicForCurrentMenu()
             }
+
             is Screen.SubMenu -> {
                 val screen = currentScreen as Screen.SubMenu
                 selectedSubMenuIndex = (selectedSubMenuIndex + 1) % screen.parentMenu.subMenu.size
@@ -342,13 +245,23 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (menuItems.isEmpty()) return super.onKeyDown(keyCode, event)
+
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+            handleDpadUp()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            handleDpadDown()
+            return true
+        }
+
         if (keyCode == KeyEvent.KEYCODE_BUTTON_A && currentScreen is Screen.MainMenu) {
             val selectedMenu = menuItems[selectedMenuIndex]
             if (selectedMenu.subMenu.isNotEmpty()) {
                 currentScreen = Screen.SubMenu(selectedMenu)
                 playBackgroundMusicForCurrentMenu()
-                val resId = getRawResourceId(audioManifest.menu_item_selected)
-                if (resId != 0) MediaPlayer.create(this, resId)?.start()
+                audioService?.playMenuSelectedSound()
             }
             return true
         }
@@ -434,15 +347,13 @@ fun WaveAnimationBackground(colors: List<Color>, stars: List<StarPosition>) {
         val width = size.width
         val height = size.height
 
-        // Draw Sky Gradient
         val skyBrush = Brush.verticalGradient(
-            colors = listOf(Color(0xFF000033), colors[0].copy(alpha = 0.5f)),
+            colors = listOf(Color(0xFF000033), colors.getOrElse(0) { Color.Black }.copy(alpha = 0.5f)),
             startY = 0f,
             endY = height / 2f
         )
         drawRect(brush = skyBrush)
 
-        // Draw Stars
         stars.forEach { star ->
             drawCircle(
                 color = Color.White.copy(alpha = star.alpha),
@@ -451,9 +362,9 @@ fun WaveAnimationBackground(colors: List<Color>, stars: List<StarPosition>) {
             )
         }
 
-        drawWave(width, height, 50f, 0.01f, phase1, colors[0].copy(alpha = 0.5f))
-        drawWave(width, height, 70f, 0.008f, phase2, colors[1].copy(alpha = 0.5f))
-        drawWave(width, height, 90f, 0.006f, phase3, colors[2].copy(alpha = 0.5f))
+        drawWave(width, height, 50f, 0.01f, phase1, colors.getOrElse(0) { Color.Black }.copy(alpha = 0.5f))
+        drawWave(width, height, 70f, 0.008f, phase2, colors.getOrElse(1) { Color.Black }.copy(alpha = 0.5f))
+        drawWave(width, height, 90f, 0.006f, phase3, colors.getOrElse(2) { Color.Black }.copy(alpha = 0.5f))
     }
 }
 
@@ -473,14 +384,19 @@ fun DrawScope.drawWave(width: Float, height: Float, amplitude: Float, frequency:
 @Preview(showBackground = true)
 @Composable
 fun PreviewHomeScreen() {
-    val previewMenuItem = MenuItem("Sleep", listOf(Color.Blue, Color.Cyan, Color.Gray), 0, 0, stars = (1..50).map {
-        StarPosition(
-            x = Random.nextFloat(),
-            y = Random.nextFloat() * 0.5f, // Only in the top half
-            size = Random.nextFloat() * 2f + 1f,
-            alpha = Random.nextFloat() * 0.5f + 0.5f
-        )
-    })
+    val previewMenuItem = MenuItem(
+        name = "Sleep",
+        colors = listOf(Color.Blue, Color.Cyan, Color.Gray),
+        backgroundMusic = null,
+        highlightSound = null,
+        stars = (1..50).map {
+            StarPosition(
+                x = Random.nextFloat(),
+                y = Random.nextFloat() * 0.5f, // Only in the top half
+                size = Random.nextFloat() * 2f + 1f,
+                alpha = Random.nextFloat() * 0.5f + 0.5f
+            )
+        })
     SailTheme {
         HomeScreen(menuItem = previewMenuItem)
     }

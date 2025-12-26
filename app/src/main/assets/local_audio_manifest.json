@@ -11,12 +11,12 @@
     "library": "mainmenu_library.mp3"
   },
   "menu_background_music": {
-    "sleep": "sleep_background.mp3",
-    "calm": "calm_background.wav",
-    "night_wake": "night_wake_background.wav",
-    "breathe": "breathe_background.mp3",
-    "awake": "awake_background.wav",
-    "library": "library_background.wav"
+    "sleep": "main_menu_bgmusic.mp3",
+    "calm": "main_menu_bgmusic.mp3",
+    "night_wake": "main_menu_bgmusic.mp3",
+    "breathe": "main_menu_bgmusic.mp3",
+    "awake": "main_menu_bgmusic.mp3",
+    "library": "main_menu_bgmusic.mp3"
   },
   "submenu_background_music": {
     "sleep": "sleep_submenu_bgmusic.wav",
