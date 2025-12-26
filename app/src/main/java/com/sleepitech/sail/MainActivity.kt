@@ -29,6 +29,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -41,6 +43,7 @@ import com.google.gson.reflect.TypeToken
 import com.sleepitech.sail.ui.theme.SailTheme
 import java.io.InputStreamReader
 import kotlin.math.sin
+import kotlin.random.Random
 
 sealed class Screen {
     object SailHome : Screen()
@@ -48,13 +51,16 @@ sealed class Screen {
     data class SubMenu(val parentMenu: MenuItem) : Screen()
 }
 
+data class StarPosition(val x: Float, val y: Float, val size: Float, val alpha: Float)
+
 data class MenuItem(
     val name: String,
     val colors: List<Color>,
     val backgroundMusicResId: Int,
     val highlightSoundResId: Int,
     val subMenu: List<SubMenuItem> = emptyList(),
-    val subMenuMusicResId: Int = 0
+    val subMenuMusicResId: Int = 0,
+    val stars: List<StarPosition> = emptyList()
 )
 
 data class SubMenuItem(val name: String)
@@ -241,15 +247,29 @@ class MainActivity : ComponentActivity() {
         backgroundMusicPlayer = null
 
         val resId = when(val screen = currentScreen) {
-            is Screen.MainMenu -> menuItems.getOrNull(selectedMenuIndex)?.backgroundMusicResId
-            is Screen.SubMenu -> screen.parentMenu.subMenuMusicResId
-            else -> null
+            is Screen.MainMenu -> {
+                Log.d(TAG, "playBackgroundMusic: Screen is MainMenu, index: $selectedMenuIndex")
+                menuItems.getOrNull(selectedMenuIndex)?.backgroundMusicResId
+            }
+            is Screen.SubMenu -> {
+                Log.d(TAG, "playBackgroundMusic: Screen is SubMenu, parent: ${screen.parentMenu.name}")
+                screen.parentMenu.subMenuMusicResId
+            }
+            else -> {
+                Log.d(TAG, "playBackgroundMusic: Screen is other, no music.")
+                null
+            }
         }
 
+        Log.d(TAG, "playBackgroundMusic: Final resource ID is $resId")
+
         if (resId != null && resId != 0) {
+            Log.d(TAG, "playBackgroundMusic: Playing music.")
             backgroundMusicPlayer = MediaPlayer.create(this, resId)
             backgroundMusicPlayer?.isLooping = true
             backgroundMusicPlayer?.start()
+        } else {
+            Log.d(TAG, "playBackgroundMusic: No valid music resource ID. Stopping music.")
         }
     }
 
@@ -342,7 +362,7 @@ fun SailHomeScreen(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        WaveAnimationBackground(colors = listOf(Color(0xFF87CEEB), Color(0xFF4682B4), Color(0xFF000080)))
+        WaveAnimationBackground(colors = listOf(Color(0xFF87CEEB), Color(0xFF4682B4), Color(0xFF000080)), stars = emptyList())
         Text(
             text = "sail",
             style = MaterialTheme.typography.headlineLarge.copy(
@@ -357,7 +377,7 @@ fun SailHomeScreen(modifier: Modifier = Modifier) {
 @Composable
 fun SubMenuScreen(modifier: Modifier = Modifier, menu: MenuItem, selectedIndex: Int) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        WaveAnimationBackground(colors = menu.colors)
+        WaveAnimationBackground(colors = menu.colors, stars = menu.stars)
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             menu.subMenu.forEachIndexed { index, item ->
                 Text(
@@ -379,7 +399,7 @@ fun HomeScreen(modifier: Modifier = Modifier, menuItem: MenuItem) {
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        WaveAnimationBackground(colors = menuItem.colors)
+        WaveAnimationBackground(colors = menuItem.colors, stars = menuItem.stars)
         Text(
             text = menuItem.name,
             style = MaterialTheme.typography.headlineLarge.copy(
@@ -392,7 +412,7 @@ fun HomeScreen(modifier: Modifier = Modifier, menuItem: MenuItem) {
 }
 
 @Composable
-fun WaveAnimationBackground(colors: List<Color>) {
+fun WaveAnimationBackground(colors: List<Color>, stars: List<StarPosition>) {
     val infiniteTransition = rememberInfiniteTransition(label = "wave_transition")
     val phase1 by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -413,6 +433,24 @@ fun WaveAnimationBackground(colors: List<Color>) {
     Canvas(modifier = Modifier.fillMaxSize()) {
         val width = size.width
         val height = size.height
+
+        // Draw Sky Gradient
+        val skyBrush = Brush.verticalGradient(
+            colors = listOf(Color(0xFF000033), colors[0].copy(alpha = 0.5f)),
+            startY = 0f,
+            endY = height / 2f
+        )
+        drawRect(brush = skyBrush)
+
+        // Draw Stars
+        stars.forEach { star ->
+            drawCircle(
+                color = Color.White.copy(alpha = star.alpha),
+                radius = star.size,
+                center = Offset(star.x * width, star.y * height)
+            )
+        }
+
         drawWave(width, height, 50f, 0.01f, phase1, colors[0].copy(alpha = 0.5f))
         drawWave(width, height, 70f, 0.008f, phase2, colors[1].copy(alpha = 0.5f))
         drawWave(width, height, 90f, 0.006f, phase3, colors[2].copy(alpha = 0.5f))
@@ -435,7 +473,14 @@ fun DrawScope.drawWave(width: Float, height: Float, amplitude: Float, frequency:
 @Preview(showBackground = true)
 @Composable
 fun PreviewHomeScreen() {
-    val previewMenuItem = MenuItem("Sleep", listOf(Color.Blue, Color.Cyan, Color.Gray), 0, 0)
+    val previewMenuItem = MenuItem("Sleep", listOf(Color.Blue, Color.Cyan, Color.Gray), 0, 0, stars = (1..50).map {
+        StarPosition(
+            x = Random.nextFloat(),
+            y = Random.nextFloat() * 0.5f, // Only in the top half
+            size = Random.nextFloat() * 2f + 1f,
+            alpha = Random.nextFloat() * 0.5f + 0.5f
+        )
+    })
     SailTheme {
         HomeScreen(menuItem = previewMenuItem)
     }
